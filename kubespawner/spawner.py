@@ -42,7 +42,8 @@ from jinja2 import Environment, BaseLoader
 from .clients import shared_client
 from kubespawner.traitlets import Callable
 from kubespawner.objects import make_pod, make_pvc
-from kubespawner.reflector import NamespacedResourceReflector
+from kubespawner.reflector import (MultiNamespaceResourceReflector,
+                                   NamespacedResourceReflector)
 from slugify import slugify
 
 
@@ -70,6 +71,22 @@ class PodReflector(NamespacedResourceReflector):
 
         ref: https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.16/#pod-v1-core
         """
+        return self.resources
+
+
+class MultiNamespacePodReflector(MultiNamespaceResourceReflector):
+    """
+    MultiNamespacePodReflector is the all-namespaces analog of PodReflector.
+    """
+
+    kind = "pods"
+    list_method_name = "list_pods_for_all_namespaces"
+    labels = {
+        "component": "singleuser-server",
+    }
+
+    @property
+    def pods(self):
         return self.resources
 
 
@@ -110,6 +127,23 @@ class EventReflector(NamespacedResourceReflector):
         )
 
 
+class MultiNamespaceEventReflector(MultiNamespaceResourceReflector):
+    """
+    MultiNamespaceEventReflector is the all-namespaces analog of
+    EventReflector.
+    """
+
+    kind = "events"
+    list_method_name = "list_namespaced_event"
+
+    @property
+    def events(self):
+        return sorted(
+            self.resources.values(),
+            key=lambda event: event["lastTimestamp"] or event["eventTime"],
+        )
+
+
 class MockObject(object):
     pass
 
@@ -134,14 +168,14 @@ class KubeSpawner(Spawner):
     @property
     def pod_reflector(self):
         """
-        A convinience alias to the class variable reflectors['pods'].
+        A convenience alias to the class variable reflectors['pods'].
         """
         return self.__class__.reflectors["pods"]
 
     @property
     def event_reflector(self):
         """
-        A convninience alias to the class variable reflectors['events'] if the
+        A convenience alias to the class variable reflectors['events'] if the
         spawner instance has events_enabled.
         """
         if self.events_enabled:
@@ -167,11 +201,22 @@ class KubeSpawner(Spawner):
                 hub.base_url = "mock_base_url"
                 hub.api_url = "mock_api_url"
                 self.hub = hub
-        else:
+
+        # We have to set the namespace (if user namespaces are enabled)
+        #  before we start the reflectors, so this must run before
+        #  watcher start in normal execution.  We still want to get the
+        #  namespace right for test, though, so we need self.user to have
+        #  been set in order to do that.
+
+        # By now, all the traitlets have been set, so we can use them to
+        # compute other attributes
+
+        if self.enable_user_namespaces:
+            self.namespace = self._expand_user_namespace_name()
+
+        if not _mock:
             # runs during normal execution only
 
-            # By now, all the traitlets have been set, so we can use them to compute
-            # other attributes
             if self.__class__.executor is None:
                 self.log.debug(
                     "Starting executor thread pool with %d workers",
@@ -250,13 +295,54 @@ class KubeSpawner(Spawner):
         """,
     )
 
+    enable_user_namespaces = Bool(
+        False,
+        config=True,
+        help="""
+        Cause each user to be spawned into an individual namespace.
+
+        This comes with some caveats.  The Hub must run with significantly
+        more privilege (must have ClusterRoles analogous to its usual Roles)
+        and can therefore do heinous things to the entire cluster.
+
+        It will also make the Reflectors aware of pods and events across
+        all namespaces.  This will have performance implications, although
+        using labels to restrict resource selection helps somewhat.
+
+        If you use this, consider cleaning up the user namespace in your
+        post_stop_hook.
+        """,
+    )
+
+    user_namespace_template = Unicode(
+        "{hubnamespace}-{username}",
+        config=True,
+        help="""
+        Template to use to form the namespace of user's pods (only if
+        enable_user_namespaces is True).
+
+        `{hubnamespace}` is expanded to the namespace name in which the pod
+        is running, unless that is `default`, in which case it is expanded
+        to `user`.
+        `{username}` is expanded to the escaped, dns-label-safe username.
+        """,
+    )
+
     namespace = Unicode(
         config=True,
         help="""
         Kubernetes namespace to spawn user pods in.
 
-        If running inside a kubernetes cluster with service accounts enabled,
-        defaults to the current namespace. If not, defaults to `default`
+        Assuming that you are not running with enable_user_namespaces
+        turned on, if running inside a kubernetes cluster with service
+        accounts enabled, defaults to the current namespace, and if not,
+        defaults to `default`.
+
+        If you are running with enable_user_namespaces, this parameter
+        is ignored in favor of the `user_namespace_template` template
+        resolved with the hub namespace and the user name, with the
+        caveat that if the hub namespace is `default` the user
+        namespace will have the prefix `user` rather than `default`.
         """,
     )
 
@@ -430,7 +516,7 @@ class KubeSpawner(Spawner):
         setattr(self.hub, change.name.split("_", 1)[1], change.new)
 
     common_labels = Dict(
-        {"app": "jupyterhub", "heritage": "jupyterhub",},
+        {"app": "jupyterhub", "heritage": "jupyterhub", },
         config=True,
         help="""
         Kubernetes labels that both spawned singleuser server pods and created
@@ -520,7 +606,7 @@ class KubeSpawner(Spawner):
     )
 
     image_pull_secrets = Union(
-        trait_types=[List(), Unicode(),],
+        trait_types=[List(), Unicode(), ],
         config=True,
         help="""
         A list of references to Kubernetes Secret resources with credentials to
@@ -566,7 +652,7 @@ class KubeSpawner(Spawner):
     )
 
     uid = Union(
-        trait_types=[Integer(), Callable(),],
+        trait_types=[Integer(), Callable(), ],
         default_value=None,
         allow_none=True,
         config=True,
@@ -589,7 +675,7 @@ class KubeSpawner(Spawner):
     )
 
     gid = Union(
-        trait_types=[Integer(), Callable(),],
+        trait_types=[Integer(), Callable(), ],
         default_value=None,
         allow_none=True,
         config=True,
@@ -612,7 +698,7 @@ class KubeSpawner(Spawner):
     )
 
     fs_gid = Union(
-        trait_types=[Integer(), Callable(),],
+        trait_types=[Integer(), Callable(), ],
         default_value=None,
         allow_none=True,
         config=True,
@@ -645,7 +731,7 @@ class KubeSpawner(Spawner):
     )
 
     supplemental_gids = Union(
-        trait_types=[List(), Callable(),],
+        trait_types=[List(), Callable(), ],
         config=True,
         help="""
         A list of GIDs that should be set as additional supplemental groups to the
@@ -1408,6 +1494,19 @@ class KubeSpawner(Spawner):
         # k8s object names cannot have trailing -
         return rendered.rstrip("-")
 
+    def _expand_user_namespace_name(self):
+        template = self.user_namespace_template
+        safe_username = escapism.escape(
+            self.user.name, safe=safe_chars, escape_char="-"
+        ).lower()
+        hub_namespace = self._namespace_default()
+        if hub_namespace = "default":
+            hub_namespace = "user"
+        rendered = template.format(
+            hubnamespace=hub_namespace
+            username=safe_username)
+        return rendered.rstrip("-")
+
     def _expand_all(self, src):
         if isinstance(src, list):
             return [self._expand_all(i) for i in src]
@@ -1769,9 +1868,12 @@ class KubeSpawner(Spawner):
         If replace=True, a running pod reflector will be stopped
         and a new one started (for recovering from possible errors).
         """
+        event_reflector_class = EventReflector
+        if self.enable_user_namespaces:
+            event_reflector_class = MultiNamespaceEventReflector
         return self._start_reflector(
             "events",
-            EventReflector,
+            event_reflector_class,
             fields={"involvedObject.kind": "Pod"},
             replace=replace,
         )
@@ -1785,8 +1887,12 @@ class KubeSpawner(Spawner):
         If replace=True, a running pod reflector will be stopped
         and a new one started (for recovering from possible errors).
         """
-        PodReflector.labels.update({"component": self.component_label})
-        return self._start_reflector("pods", PodReflector, replace=replace)
+        pod_reflector_class = PodReflector
+        if self.enable_user_namespaces:
+            pod_reflector_class = MultiNamespacePodReflector
+        pod_reflector_class.labels.update({"component": self.component_label})
+        return self._start_reflector("pods", pod_reflector_class,
+                                     replace=replace)
 
     # record a future for the call to .start()
     # so we can use it to terminate .progress()

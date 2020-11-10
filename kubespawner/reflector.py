@@ -8,7 +8,7 @@ import time
 import threading
 
 from traitlets.config import LoggingConfigurable
-from traitlets import Any, Dict, Int, Unicode
+from traitlets import Any, Bool, Dict, Int, Unicode
 from kubernetes import config, watch
 
 # This is kubernetes client implementation specific, but we need to know
@@ -18,11 +18,14 @@ from urllib3.exceptions import ReadTimeoutError
 from .clients import shared_client
 
 
-class NamespacedResourceReflector(LoggingConfigurable):
-    """
-    Base class for keeping a local up-to-date copy of a set of kubernetes resources.
+class ResourceReflector(LoggingConfigurable):
+    """Base class for keeping a local up-to-date copy of a set of
+    kubernetes resources.
 
-    Must be subclassed once per kind of resource that needs watching.
+    Must be subclassed once per kind of resource that needs watching, but
+    in general you should subclass either NamespacedResourceReflector or
+    MultiNamespaceResourceReflector, depending on whether you are using
+    per-user namespaces or not.
     """
 
     labels = Dict(
@@ -38,14 +41,6 @@ class NamespacedResourceReflector(LoggingConfigurable):
         config=True,
         help="""
         Fields to restrict the reflected objects
-        """,
-    )
-
-    namespace = Unicode(
-        None,
-        allow_none=True,
-        help="""
-        Namespace to watch for resources in
         """,
     )
 
@@ -67,14 +62,45 @@ class NamespacedResourceReflector(LoggingConfigurable):
         """,
     )
 
+    omit_namespace = Bool(
+        False,
+        config=True,
+        help="""
+        Set this to true if the reflector is to operate across
+        multiple namespaces.  This is set by both the
+        MultiNamespaceResourceReflector and
+        NamespacedResourceReflector subclasses, so you probably do not
+        have to set it yourself.
+        """,
+    )
+
+    namespace = Unicode(
+        None,
+        allow_none=True,
+        help="""
+        Namespace to watch for resources in; leave at 'None' for
+        MultiNamespaceResourceReflectors.
+        """,
+    )
+
     list_method_name = Unicode(
         "",
         help="""
-        Name of function (on apigroup respresented by `api_group_name`) that is to be called to list resources.
+        Name of function (on apigroup respresented by
+        `api_group_name`) that is to be called to list resources.
 
-        This will be passed a namespace & a label selector. You most likely want something
-        of the form list_namespaced_<resource> - for example, `list_namespaced_pod` will
-        give you a PodReflector.
+        This will be passed a a label selector. 
+
+        If self.omit_namespace is False (and this class is a
+        NamespacedResourceReflector), you want something of the form
+        list_namespaced_<resource> - for example,
+        `list_namespaced_pod` will give you a PodReflector.  It will take
+        its namespace from self.namespace (which therefore should not be
+        None).
+
+        If self.omit_namespace is True (and this class is a
+        MultiNamespaceResourceReflector), you want
+        list_<resource>_for_all_namespaces.
 
         This must be set by a subclass.
         """,
@@ -83,10 +109,12 @@ class NamespacedResourceReflector(LoggingConfigurable):
     api_group_name = Unicode(
         "CoreV1Api",
         help="""
-        Name of class that represents the apigroup on which `list_method_name` is to be found.
+        Name of class that represents the apigroup on which
+        `list_method_name` is to be found.
 
-        Defaults to CoreV1Api, which has everything in the 'core' API group. If you want to watch Ingresses,
-        for example, you would have to use ExtensionsV1beta1Api
+        Defaults to CoreV1Api, which has everything in the 'core' API
+        group. If you want to watch Ingresses, for example, you would
+        have to use ExtensionsV1beta1Api
         """,
     )
 
@@ -162,13 +190,22 @@ class NamespacedResourceReflector(LoggingConfigurable):
 
         Overwrites all current resource info.
         """
-        initial_resources = getattr(self.api, self.list_method_name)(
-            self.namespace,
-            label_selector=self.label_selector,
-            field_selector=self.field_selector,
-            _request_timeout=self.request_timeout,
-            _preload_content=False,
-        )
+        initial_resources = None
+        if self.omit_namespace:
+            initial_resources = getattr(self.api, self.list_method_name)(
+                label_selector=self.label_selector,
+                field_selector=self.field_selector,
+                _request_timeout=self.request_timeout,
+                _preload_content=False,
+            )
+        else:
+            initial_resources = getattr(self.api, self.list_method_name)(
+                self.namespace,
+                label_selector=self.label_selector,
+                field_selector=self.field_selector,
+                _request_timeout=self.request_timeout,
+                _preload_content=False,
+            )
         # This is an atomic operation on the dictionary!
         initial_resources = json.loads(initial_resources.read())
         self.resources = {
@@ -210,11 +247,16 @@ class NamespacedResourceReflector(LoggingConfigurable):
 
         cur_delay = 0.1
 
+        if self.omit_namespace:
+            ns_str = "all namespaces"
+        else:
+            ns_str = "namespace {}".format(self.namespace)
+
         self.log.info(
-            "watching for %s with %s in namespace %s",
+            "watching for %s with %s in %s",
             self.kind,
             log_selector,
-            self.namespace,
+            ns_str,
         )
         while True:
             self.log.debug("Connecting %s watcher", self.kind)
@@ -226,11 +268,12 @@ class NamespacedResourceReflector(LoggingConfigurable):
                     # signal that we've loaded our initial data
                     self.first_load_future.set_result(None)
                 watch_args = {
-                    "namespace": self.namespace,
                     "label_selector": self.label_selector,
                     "field_selector": self.field_selector,
                     "resource_version": resource_version,
                 }
+                if not self.omit_namespace:
+                    watch_args["namespace"] = self.namespace
                 if self.request_timeout:
                     # set network receive timeout
                     watch_args["_request_timeout"] = self.request_timeout
@@ -241,7 +284,8 @@ class NamespacedResourceReflector(LoggingConfigurable):
                     getattr(self.api, self.list_method_name),
                     _preload_content=False,
                 )
-                # in case of timeout_seconds, the w.stream just exits (no exception thrown)
+                # in case of timeout_seconds, the w.stream just exits
+                # (no exception thrown)
                 # -> we stop the watcher and start a new one
                 for watch_event in w.stream(method, **watch_args):
                     # Remember that these events are k8s api related WatchEvents
@@ -327,3 +371,23 @@ class NamespacedResourceReflector(LoggingConfigurable):
 
     def stopped(self):
         return self._stop_event.is_set()
+
+
+class NamespacedResourceReflector(ResourceReflector):
+    """
+    Watches for resources in a particular namespace.  The list_methods
+    want both a method name and a namespace.
+    """
+    omit_namespace = False
+
+
+class MultiNamespaceResourceReflector(ResourceReflector):
+    """
+    Watches for resources across all namespaces.  The list_methods
+    want only a method name.  Note that this requires the service account
+    to be significantly more powerful, since it must be bound to ClusterRoles
+    rather than just Roles, and therefore this is inherently more
+    dangerous.
+    """
+    omit_namespace = True
+    namespace = None
