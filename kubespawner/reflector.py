@@ -253,10 +253,7 @@ class ResourceReflector(LoggingConfigurable):
             ns_str = "namespace {}".format(self.namespace)
 
         self.log.info(
-            "watching for %s with %s in %s",
-            self.kind,
-            log_selector,
-            ns_str,
+            "watching for %s with %s in %s", self.kind, log_selector, ns_str,
         )
         while True:
             self.log.debug("Connecting %s watcher", self.kind)
@@ -378,6 +375,7 @@ class NamespacedResourceReflector(ResourceReflector):
     Watches for resources in a particular namespace.  The list_methods
     want both a method name and a namespace.
     """
+
     omit_namespace = False
 
 
@@ -389,5 +387,6 @@ class MultiNamespaceResourceReflector(ResourceReflector):
     rather than just Roles, and therefore this is inherently more
     dangerous.
     """
+
     omit_namespace = True
     namespace = None

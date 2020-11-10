@@ -370,3 +370,9 @@ def test_spawner_can_use_list_of_image_pull_secrets():
     c.KubeSpawner.image_pull_secrets = secrets
     spawner = KubeSpawner(hub=Hub(), config=c, _mock=True)
     assert spawner.image_pull_secrets == secrets
+
+
+def test_enable_user_namespaces():
+    user = MockUser()
+    spawner = KubeSpawner(user=user, _mock=True, enable_user_namespaces=True)
+    assert spawner.namespace.endswith("-{}".format(user.escaped_name))

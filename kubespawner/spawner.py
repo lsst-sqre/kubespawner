@@ -42,8 +42,10 @@ from jinja2 import Environment, BaseLoader
 from .clients import shared_client
 from kubespawner.traitlets import Callable
 from kubespawner.objects import make_pod, make_pvc
-from kubespawner.reflector import (MultiNamespaceResourceReflector,
-                                   NamespacedResourceReflector)
+from kubespawner.reflector import (
+    MultiNamespaceResourceReflector,
+    NamespacedResourceReflector,
+)
 from slugify import slugify
 
 
@@ -516,7 +518,7 @@ class KubeSpawner(Spawner):
         setattr(self.hub, change.name.split("_", 1)[1], change.new)
 
     common_labels = Dict(
-        {"app": "jupyterhub", "heritage": "jupyterhub", },
+        {"app": "jupyterhub", "heritage": "jupyterhub",},
         config=True,
         help="""
         Kubernetes labels that both spawned singleuser server pods and created
@@ -606,7 +608,7 @@ class KubeSpawner(Spawner):
     )
 
     image_pull_secrets = Union(
-        trait_types=[List(), Unicode(), ],
+        trait_types=[List(), Unicode(),],
         config=True,
         help="""
         A list of references to Kubernetes Secret resources with credentials to
@@ -652,7 +654,7 @@ class KubeSpawner(Spawner):
     )
 
     uid = Union(
-        trait_types=[Integer(), Callable(), ],
+        trait_types=[Integer(), Callable(),],
         default_value=None,
         allow_none=True,
         config=True,
@@ -675,7 +677,7 @@ class KubeSpawner(Spawner):
     )
 
     gid = Union(
-        trait_types=[Integer(), Callable(), ],
+        trait_types=[Integer(), Callable(),],
         default_value=None,
         allow_none=True,
         config=True,
@@ -698,7 +700,7 @@ class KubeSpawner(Spawner):
     )
 
     fs_gid = Union(
-        trait_types=[Integer(), Callable(), ],
+        trait_types=[Integer(), Callable(),],
         default_value=None,
         allow_none=True,
         config=True,
@@ -731,7 +733,7 @@ class KubeSpawner(Spawner):
     )
 
     supplemental_gids = Union(
-        trait_types=[List(), Callable(), ],
+        trait_types=[List(), Callable(),],
         config=True,
         help="""
         A list of GIDs that should be set as additional supplemental groups to the
@@ -1496,15 +1498,16 @@ class KubeSpawner(Spawner):
 
     def _expand_user_namespace_name(self):
         template = self.user_namespace_template
+        safe_chars = set(string.ascii_lowercase + string.digits)
         safe_username = escapism.escape(
             self.user.name, safe=safe_chars, escape_char="-"
         ).lower()
         hub_namespace = self._namespace_default()
-        if hub_namespace = "default":
+        if hub_namespace == "default":
             hub_namespace = "user"
         rendered = template.format(
-            hubnamespace=hub_namespace
-            username=safe_username)
+            hubnamespace=hub_namespace, username=safe_username
+        )
         return rendered.rstrip("-")
 
     def _expand_all(self, src):
@@ -1891,8 +1894,9 @@ class KubeSpawner(Spawner):
         if self.enable_user_namespaces:
             pod_reflector_class = MultiNamespacePodReflector
         pod_reflector_class.labels.update({"component": self.component_label})
-        return self._start_reflector("pods", pod_reflector_class,
-                                     replace=replace)
+        return self._start_reflector(
+            "pods", pod_reflector_class, replace=replace
+        )
 
     # record a future for the call to .start()
     # so we can use it to terminate .progress()
