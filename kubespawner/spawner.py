@@ -42,8 +42,10 @@ from jinja2 import Environment, BaseLoader
 from .clients import shared_client
 from kubespawner.traitlets import Callable
 from kubespawner.objects import make_pod, make_pvc
-from kubespawner.reflector import NamespacedResourceReflector
+from kubespawner.reflector import (MultiNamespaceResourceReflector,
+                                   NamespacedResourceReflector)
 from slugify import slugify
+
 
 class PodReflector(NamespacedResourceReflector):
     """
@@ -68,6 +70,22 @@ class PodReflector(NamespacedResourceReflector):
 
         ref: https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.16/#pod-v1-core
         """
+        return self.resources
+
+
+class MultiNamespacePodReflector(MultiNamespaceResourceReflector):
+    """
+    MultiNamespacePodReflector is the all-namespaces analog of PodReflector.
+    """
+
+    kind = "pods"
+    list_method_name = "list_pods_for_all_namespaces"
+    labels = {
+        "component": "singleuser-server",
+    }
+
+    @property
+    def pods(self):
         return self.resources
 
 
@@ -107,8 +125,26 @@ class EventReflector(NamespacedResourceReflector):
         )
 
 
+class MultiNamespaceEventReflector(MultiNamespaceResourceReflector):
+    """
+    MultiNamespaceEventReflector is the all-namespaces analog of
+    EventReflector.
+    """
+
+    kind = "events"
+    list_method_name = "list_namespaced_event"
+
+    @property
+    def events(self):
+        return sorted(
+            self.resources.values(),
+            key=lambda event: event["lastTimestamp"] or event["eventTime"],
+        )
+
+
 class MockObject(object):
     pass
+
 
 class KubeSpawner(Spawner):
     """
@@ -130,14 +166,14 @@ class KubeSpawner(Spawner):
     @property
     def pod_reflector(self):
         """
-        A convinience alias to the class variable reflectors['pods'].
+        A convenience alias to the class variable reflectors['pods'].
         """
         return self.__class__.reflectors['pods']
 
     @property
     def event_reflector(self):
         """
-        A convninience alias to the class variable reflectors['events'] if the
+        A convenience alias to the class variable reflectors['events'] if the
         spawner instance has events_enabled.
         """
         if self.events_enabled:
@@ -163,11 +199,22 @@ class KubeSpawner(Spawner):
                 hub.base_url = 'mock_base_url'
                 hub.api_url = 'mock_api_url'
                 self.hub = hub
-        else:
+
+        # We have to set the namespace (if user namespaces are enabled)
+        #  before we start the reflectors, so this must run before
+        #  watcher start in normal execution.  We still want to get the
+        #  namespace right for test, though, so we need self.user to have
+        #  been set in order to do that.
+
+        # By now, all the traitlets have been set, so we can use them to
+        # compute other attributes
+
+        if self.enable_user_namespaces:
+            self.namespace = self._expand_user_namespace_name()
+
+        if not _mock:
             # runs during normal execution only
 
-            # By now, all the traitlets have been set, so we can use them to compute
-            # other attributes
             if self.__class__.executor is None:
                 self.log.debug('Starting executor thread pool with %d workers',
                                self.k8s_api_threadpool_workers)
@@ -244,14 +291,55 @@ class KubeSpawner(Spawner):
         """
     )
 
+    enable_user_namespaces = Bool(
+        False,
+        config=True,
+        help="""
+        Cause each user to be spawned into an individual namespace.
+
+        This comes with some caveats.  The Hub must run with significantly
+        more privilege (must have ClusterRoles analogous to its usual Roles)
+        and can therefore do heinous things to the entire cluster.
+
+        It will also make the Reflectors aware of pods and events across
+        all namespaces.  This will have performance implications, although
+        using labels to restrict resource selection helps somewhat.
+
+        If you use this, consider cleaning up the user namespace in your
+        post_stop_hook.
+        """,
+    )
+
+    user_namespace_template = Unicode(
+        "{hubnamespace}-{username}",
+        config=True,
+        help="""
+        Template to use to form the namespace of user's pods (only if
+        enable_user_namespaces is True).
+
+        `{hubnamespace}` is expanded to the namespace name in which the pod
+        is running, unless that is `default`, in which case it is expanded
+        to `user`.
+        `{username}` is expanded to the escaped, dns-label-safe username.
+        """,
+    )
+
     namespace = Unicode(
         config=True,
         help="""
         Kubernetes namespace to spawn user pods in.
 
-        If running inside a kubernetes cluster with service accounts enabled,
-        defaults to the current namespace. If not, defaults to `default`
-        """
+        Assuming that you are not running with enable_user_namespaces
+        turned on, if running inside a kubernetes cluster with service
+        accounts enabled, defaults to the current namespace, and if not,
+        defaults to `default`.
+
+        If you are running with enable_user_namespaces, this parameter
+        is ignored in favor of the `user_namespace_template` template
+        resolved with the hub namespace and the user name, with the
+        caveat that if the hub namespace is `default` the user
+        namespace will have the prefix `user` rather than `default`.
+        """,
     )
 
     @default('namespace')
@@ -417,7 +505,7 @@ class KubeSpawner(Spawner):
             KubeSpawner.{0} is deprecated with JupyterHub >= 0.8.
             Use JupyterHub.{0}
             """.format(change.name),
-            DeprecationWarning)
+                      DeprecationWarning)
         setattr(self.hub, change.name.split('_', 1)[1], change.new)
 
     common_labels = Dict(
@@ -645,7 +733,8 @@ class KubeSpawner(Spawner):
         upgrades to break.
 
         You'll *have* to set this if you are using auto-provisioned volumes with most
-        cloud providers. See `fsGroup <https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.11/#podsecuritycontext-v1-core>`_
+        #podsecuritycontext-v1-core>`_
+        cloud providers. See `fsGroup <https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.11/
         for more details.
         """
     )
@@ -689,11 +778,11 @@ class KubeSpawner(Spawner):
         config=True,
         help="""
         Controls whether a process can gain more privileges than its parent process.
-        
-        This bool directly controls whether the no_new_privs flag gets set on the container 
+
+        This bool directly controls whether the no_new_privs flag gets set on the container
         process.
 
-        AllowPrivilegeEscalation is true always when the container is: 
+        AllowPrivilegeEscalation is true always when the container is:
         1) run as Privileged OR 2) has CAP_SYS_ADMIN.
         """
     )
@@ -778,7 +867,8 @@ class KubeSpawner(Spawner):
 
         This will be added to the `resources: requests: storage:` in the k8s pod spec.
 
-        See `the Kubernetes documentation <https://kubernetes.io/docs/concepts/storage/persistent-volumes/#persistentvolumeclaims>`__
+        #persistentvolumeclaims>`__
+        See `the Kubernetes documentation <https://kubernetes.io/docs/concepts/storage/persistent-volumes/
         for more information on how storage works.
 
         Quantities can be represented externally as unadorned integers, or as fixed-point
@@ -856,7 +946,8 @@ class KubeSpawner(Spawner):
 
         For example to match the Nodes that have a label of `content: jupyter` use::
 
-           c.KubeSpawner.storage_selector = {'matchLabels':{'content': 'jupyter'}}
+           c.KubeSpawner.storage_selector = {
+               'matchLabels':{'content': 'jupyter'}}
         """
     )
 
@@ -897,7 +988,8 @@ class KubeSpawner(Spawner):
 
         This list will be directly added under `initContainers` in the kubernetes pod spec,
         so you should use the same structure. Each item in the dict must a field
-        of the `V1Container specification <https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.11/#container-v1-core>`_.
+        #container-v1-core>`_.
+        of the `V1Container specification <https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.11/
 
         One usage is disabling access to metadata service from single-user
         notebook server with configuration below::
@@ -928,7 +1020,8 @@ class KubeSpawner(Spawner):
 
         This dict will be directly merge into `container` of notebook server,
         so you should use the same structure. Each item in the dict must a field
-        of the `V1Container specification <https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.11/#container-v1-core>`_.
+        #container-v1-core>`_.
+        of the `V1Container specification <https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.11/
 
         One usage is set ``envFrom`` on notebook container with configuration below::
 
@@ -953,7 +1046,8 @@ class KubeSpawner(Spawner):
 
         This dict will be directly merge into pod,so you should use the same structure.
         Each item in the dict is field of pod configuration
-        which follows spec at https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.11/#podspec-v1-core.
+        #podspec-v1-core.
+        which follows spec at https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.11/
 
         One usage is set restartPolicy and dnsPolicy with configuration below::
 
@@ -975,7 +1069,8 @@ class KubeSpawner(Spawner):
 
         This list will be directly appended under `containers` in the kubernetes pod spec,
         so you should use the same structure. Each item in the list is container configuration
-        which follows spec at https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.11/#container-v1-core.
+        #container-v1-core.
+        which follows spec at https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.11/
 
         One usage is setting crontab in a container to clean sensitive data with configuration below::
 
@@ -1038,7 +1133,8 @@ class KubeSpawner(Spawner):
         https://kubernetes.io/docs/concepts/configuration/assign-pod-node/
 
         Pass this field an array of "PreferredSchedulingTerm" objects.*
-        * https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.11/#preferredschedulingterm-v1-core
+        #preferredschedulingterm-v1-core
+        * https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.11/
         """
     )
     node_affinity_required = List(
@@ -1050,7 +1146,8 @@ class KubeSpawner(Spawner):
         https://kubernetes.io/docs/concepts/configuration/assign-pod-node/
 
         Pass this field an array of "NodeSelectorTerm" objects.*
-        * https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.11/#nodeselectorterm-v1-core
+        #nodeselectorterm-v1-core
+        * https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.11/
         """
     )
     pod_affinity_preferred = List(
@@ -1062,7 +1159,8 @@ class KubeSpawner(Spawner):
         https://kubernetes.io/docs/concepts/configuration/assign-pod-node/
 
         Pass this field an array of "WeightedPodAffinityTerm" objects.*
-        * https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.11/#weightedpodaffinityterm-v1-core
+        #weightedpodaffinityterm-v1-core
+        * https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.11/
         """
     )
     pod_affinity_required = List(
@@ -1074,7 +1172,8 @@ class KubeSpawner(Spawner):
         https://kubernetes.io/docs/concepts/configuration/assign-pod-node/
 
         Pass this field an array of "PodAffinityTerm" objects.*
-        * https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.11/#podaffinityterm-v1-core
+        #podaffinityterm-v1-core
+        * https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.11/
         """
     )
     pod_anti_affinity_preferred = List(
@@ -1398,10 +1497,13 @@ class KubeSpawner(Spawner):
         safe_chars = set(string.ascii_lowercase + string.digits)
 
         raw_servername = self.name or ''
-        safe_servername = escapism.escape(raw_servername, safe=safe_chars, escape_char='-').lower()
+        safe_servername = escapism.escape(
+            raw_servername, safe=safe_chars, escape_char='-').lower()
 
-        legacy_escaped_username = ''.join([s if s in safe_chars else '-' for s in self.user.name.lower()])
-        safe_username = escapism.escape(self.user.name, safe=safe_chars, escape_char='-').lower()
+        legacy_escaped_username = ''.join(
+            [s if s in safe_chars else '-' for s in self.user.name.lower()])
+        safe_username = escapism.escape(
+            self.user.name, safe=safe_chars, escape_char='-').lower()
         rendered = template.format(
             userid=self.user.id,
             username=safe_username,
@@ -1412,6 +1514,20 @@ class KubeSpawner(Spawner):
         )
         # strip trailing - delimiter in case of empty servername.
         # k8s object names cannot have trailing -
+        return rendered.rstrip("-")
+
+    def _expand_user_namespace_name(self):
+        template = self.user_namespace_template
+        safe_chars = set(string.ascii_lowercase + string.digits)
+        safe_username = escapism.escape(
+            self.user.name, safe=safe_chars, escape_char="-"
+        ).lower()
+        hub_namespace = self._namespace_default()
+        if hub_namespace == "default":
+            hub_namespace = "user"
+        rendered = template.format(
+            hubnamespace=hub_namespace,
+            username=safe_username)
         return rendered.rstrip("-")
 
     def _expand_all(self, src):
@@ -1480,7 +1596,8 @@ class KubeSpawner(Spawner):
             real_cmd = None
 
         labels = self._build_pod_labels(self._expand_all(self.extra_labels))
-        annotations = self._build_common_annotations(self._expand_all(self.extra_annotations))
+        annotations = self._build_common_annotations(
+            self._expand_all(self.extra_annotations))
 
         return make_pod(
             name=self.pod_name,
@@ -1773,9 +1890,12 @@ class KubeSpawner(Spawner):
         If replace=True, a running pod reflector will be stopped
         and a new one started (for recovering from possible errors).
         """
+        event_reflector_class = EventReflector
+        if self.enable_user_namespaces:
+            event_reflector_class = MultiNamespaceEventReflector
         return self._start_reflector(
             "events",
-            EventReflector,
+            event_reflector_class,
             fields={"involvedObject.kind": "Pod"},
             replace=replace,
         )
@@ -1789,8 +1909,12 @@ class KubeSpawner(Spawner):
         If replace=True, a running pod reflector will be stopped
         and a new one started (for recovering from possible errors).
         """
-        PodReflector.labels.update({'component': self.component_label})
-        return self._start_reflector("pods", PodReflector, replace=replace)
+        pod_reflector_class = PodReflector
+        if self.enable_user_namespaces:
+            pod_reflector_class = MultiNamespacePodReflector
+        pod_reflector_class.labels.update({"component": self.component_label})
+        return self._start_reflector("pods", pod_reflector_class,
+                                     replace=replace)
 
     # record a future for the call to .start()
     # so we can use it to terminate .progress()
