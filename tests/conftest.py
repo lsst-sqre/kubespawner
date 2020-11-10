@@ -35,7 +35,7 @@ def kube_client(request, kube_ns):
     skips test that require kubernetes if kubernetes cannot be contacted
     """
     load_kube_config()
-    client = shared_client('CoreV1Api')
+    client = shared_client("CoreV1Api")
     try:
         namespaces = client.list_namespace(_request_timeout=3)
     except Exception as e:
