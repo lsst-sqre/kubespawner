@@ -363,3 +363,34 @@ def test_multi_namespace_spawner_class():
     spawner = MultiNamespaceKubeSpawner(user=user, _mock=True)
     assert spawner.namespace.endswith("-{}".format(user.escaped_name))
     
+
+@pytest.mark.asyncio
+async def test_multi_namespace_spawn(kube_client, config):
+    spawner = MultiNamespaceKubeSpawner(hub=Hub(), user=MockUser(),
+                                        config=config)
+    # empty spawner isn't running
+    status = await spawner.poll()
+    assert isinstance(status, int)
+
+    # start the spawner
+    await spawner.start()
+    # get the namespace
+    kube_ns = spawner.namespace
+    # verify the pod exists
+    pods = kube_client.list_namespaced_pod(kube_ns).items
+    pod_names = [p.metadata.name for p in pods]
+    assert "jupyter-%s" % spawner.user.name in pod_names
+    # verify poll while running
+    status = await spawner.poll()
+    assert status is None
+    # stop the pod
+    await spawner.stop()
+
+    # verify pod is gone
+    pods = kube_client.list_namespaced_pod(kube_ns).items
+    pod_names = [p.metadata.name for p in pods]
+    assert "jupyter-%s" % spawner.user.name not in pod_names
+
+    # verify exit status
+    status = await spawner.poll()
+    assert isinstance(status, int)

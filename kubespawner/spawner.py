@@ -1883,10 +1883,11 @@ class KubeSpawner(Spawner):
 
         self.log.warning("Current reflector: {}".format(
             self.__class__.reflectors[key]))
+        self.log.warning("Current reflector resources: {}".format(
+            self.__class__.reflectors[key].resources))
 
         # return the current reflector
         return self.__class__.reflectors[key]
-
 
     def _start_watching_events(self, replace=False):
         """Start the events reflector
@@ -1945,7 +1946,8 @@ class KubeSpawner(Spawner):
         True / False on success / failure
         """
         try:
-            self.log.info(f"Attempting to create pod {pod.metadata.name}, with timeout {request_timeout}")
+            self.log.info(
+                f"Attempting to create pod {pod.metadata.name}, with timeout {request_timeout}")
             # Use tornado's timeout, _request_timeout seems unreliable?
             await gen.with_timeout(timedelta(seconds=request_timeout), self.asynchronize(
                 self.api.create_namespaced_pod,
@@ -1966,7 +1968,8 @@ class KubeSpawner(Spawner):
             # TODO: this should show up in events
             await self.stop(True)
 
-            self.log.info(f'Killed pod {pod_name}, will try starting singleuser pod again')
+            self.log.info(
+                f'Killed pod {pod_name}, will try starting singleuser pod again')
             # We tell exponential_backoff to retry
             return False
 

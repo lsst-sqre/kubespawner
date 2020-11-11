@@ -204,6 +204,7 @@ class ResourceReflector(LoggingConfigurable):
         initial_resources = json.loads(initial_resources.read())
         self.resources = {p["metadata"]["name"]
             : p for p in initial_resources["items"]}
+        self.log.warning("Reflector resources: {}".self.resources)
         # return the resource version so we can hook up a watch
         return initial_resources["metadata"]["resourceVersion"]
 
