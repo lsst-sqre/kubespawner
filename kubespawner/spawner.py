@@ -79,7 +79,7 @@ class MultiNamespacePodReflector(MultiNamespaceResourceReflector):
     """
 
     kind = "pods"
-    list_method_name = "list_pods_for_all_namespaces"
+    list_method_name = "list_pod_for_all_namespaces"
     labels = {
         "component": "singleuser-server",
     }
@@ -132,7 +132,7 @@ class MultiNamespaceEventReflector(MultiNamespaceResourceReflector):
     """
 
     kind = "events"
-    list_method_name = "list_namespaced_event"
+    list_method_name = "list_event_for_all_namespaces"
 
     @property
     def events(self):
