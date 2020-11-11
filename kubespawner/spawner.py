@@ -344,15 +344,8 @@ class KubeSpawner(Spawner):
 
     @default('namespace')
     def _namespace_default(self):
-        """The default user spawning namespace, if `namespace` is in force,
-        since you are not using enable_user_namespaces, is the same
-        namespace as the Hub itself is in.
         """
-        return self.get_hub_namespace()
-
-    def get_hub_namespace(self):
-        """
-        Return current namespace if running in a k8s cluster
+        Set namespace default to current namespace if running in a k8s cluster
 
         If not in a k8s cluster with service accounts enabled, default to
         `default`
@@ -362,6 +355,9 @@ class KubeSpawner(Spawner):
             with open(ns_path) as f:
                 return f.read().strip()
         return 'default'
+
+    def get_hub_namespace(self):
+        return self._namespace_default()
 
     ip = Unicode(
         '0.0.0.0',
