@@ -4,7 +4,7 @@ from jupyterhub.orm import Spawner
 from kubernetes.client.models import (
     V1SecurityContext, V1Container, V1Capabilities, V1Pod
 )
-from kubespawner import KubeSpawner
+from kubespawner import KubeSpawner, MultiNamespaceKubeSpawner
 from traitlets.config import Config
 from unittest.mock import Mock
 import json
@@ -356,3 +356,10 @@ def test_enable_user_namespaces():
     user = MockUser()
     spawner = KubeSpawner(user=user, _mock=True, enable_user_namespaces=True)
     assert spawner.namespace.endswith("-{}".format(user.escaped_name))
+
+
+def test_multi_namespace_spawner_class():
+    user = MockUser()
+    spawner = MultiNamespaceKubeSpawner(user=user, _mock=True)
+    assert spawner.namespace.endswith("-{}".format(user.escaped_name))
+    

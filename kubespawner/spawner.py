@@ -2282,3 +2282,10 @@ class KubeSpawner(Spawner):
                     )
                 )
             )
+
+
+class MultiNamespaceKubeSpawner(KubeSpawner):
+    """
+    MultiNamespaceKubeSpawner is the all-namespaces analog of KubeSpawner.
+    """
+    enable_user_namespaces=True
