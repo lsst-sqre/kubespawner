@@ -41,7 +41,7 @@ from jinja2 import Environment, BaseLoader
 
 from .clients import shared_client
 from kubespawner.traitlets import Callable
-from kubespawner.objects import make_pod, make_pvc
+from kubespawner.objects import make_pod, make_pvc, make_namespace
 from kubespawner.reflector import (MultiNamespaceResourceReflector,
                                    NamespacedResourceReflector)
 from slugify import slugify
@@ -1983,7 +1983,8 @@ class KubeSpawner(Spawner):
         # created.
         pvc_name = pvc.metadata.name
         try:
-            self.log.info(f"Attempting to create pvc {pvc.metadata.name}, with timeout {request_timeout}")
+            self.log.info(
+                f"Attempting to create pvc {pvc.metadata.name}, with timeout {request_timeout}")
             await gen.with_timeout(timedelta(seconds=request_timeout), self.asynchronize(
                 self.api.create_namespaced_persistent_volume_claim,
                 namespace=self.namespace,
@@ -1995,7 +1996,8 @@ class KubeSpawner(Spawner):
             return False
         except ApiException as e:
             if e.status == 409:
-                self.log.info("PVC " + pvc_name + " already exists, so did not create new pvc.")
+                self.log.info("PVC " + pvc_name +
+                              " already exists, so did not create new pvc.")
                 return True
             elif e.status == 403:
                 t, v, tb = sys.exc_info()
@@ -2009,7 +2011,8 @@ class KubeSpawner(Spawner):
                 except ApiException as e:
                     raise v.with_traceback(tb)
 
-                self.log.info("PVC " + self.pvc_name + " already exists, possibly have reached quota though.")
+                self.log.info(
+                    "PVC " + self.pvc_name + " already exists, possibly have reached quota though.")
                 return True
             else:
                 raise
@@ -2019,6 +2022,11 @@ class KubeSpawner(Spawner):
 
         # load user options (including profile)
         await self.load_user_options()
+
+        # If we have user_namespaces enabled, create the namespace.
+        #  It's fine if it already exists.
+        if self.enable_user_namespaces:
+            await self._ensure_namespace()
 
         # record latest event so we don't include old
         # events from previous pods in self.events
@@ -2034,7 +2042,8 @@ class KubeSpawner(Spawner):
 
             # If there's a timeout, just let it propagate
             await exponential_backoff(
-                partial(self._make_create_pvc_request, pvc, self.k8s_api_request_timeout),
+                partial(self._make_create_pvc_request,
+                        pvc, self.k8s_api_request_timeout),
                 f'Could not create pod {self.pvc_name}',
                 # Each req should be given k8s_api_request_timeout seconds.
                 timeout=self.k8s_api_request_retry_timeout
@@ -2048,7 +2057,8 @@ class KubeSpawner(Spawner):
 
         # If there's a timeout, just let it propagate
         await exponential_backoff(
-            partial(self._make_create_pod_request, pod, self.k8s_api_request_timeout),
+            partial(self._make_create_pod_request,
+                    pod, self.k8s_api_request_timeout),
             f'Could not create pod {self.pod_name}',
             timeout=self.k8s_api_request_retry_timeout
         )
@@ -2061,8 +2071,10 @@ class KubeSpawner(Spawner):
         # start_timeout, starting from a slightly earlier point.
         try:
             await exponential_backoff(
-                lambda: self.is_pod_running(self.pod_reflector.pods.get(self.pod_name, None)),
-                'pod/%s did not start in %s seconds!' % (self.pod_name, self.start_timeout),
+                lambda: self.is_pod_running(
+                    self.pod_reflector.pods.get(self.pod_name, None)),
+                'pod/%s did not start in %s seconds!' % (
+                    self.pod_name, self.start_timeout),
                 timeout=self.start_timeout,
             )
         except TimeoutError:
@@ -2084,7 +2096,8 @@ class KubeSpawner(Spawner):
                 self.pod_name,
                 "\n".join(
                     [
-                        "%s [%s] %s" % (event["lastTimestamp"] or event["eventTime"], event["type"], event["message"])
+                        "%s [%s] %s" % (
+                            event["lastTimestamp"] or event["eventTime"], event["type"], event["message"])
                         for event in self.events
                     ]
                 ),
@@ -2131,17 +2144,19 @@ class KubeSpawner(Spawner):
 
         delete_options.grace_period_seconds = grace_seconds
 
-
         await exponential_backoff(
-            partial(self._make_delete_pod_request, self.pod_name, delete_options, grace_seconds, self.k8s_api_request_timeout),
+            partial(self._make_delete_pod_request, self.pod_name,
+                    delete_options, grace_seconds, self.k8s_api_request_timeout),
             f'Could not delete pod {self.pod_name}',
             timeout=self.k8s_api_request_retry_timeout
         )
 
         try:
             await exponential_backoff(
-                lambda: self.pod_reflector.pods.get(self.pod_name, None) is None,
-                'pod/%s did not disappear in %s seconds!' % (self.pod_name, self.start_timeout),
+                lambda: self.pod_reflector.pods.get(
+                    self.pod_name, None) is None,
+                'pod/%s did not disappear in %s seconds!' % (
+                    self.pod_name, self.start_timeout),
                 timeout=self.start_timeout,
             )
         except TimeoutError:
@@ -2292,6 +2307,19 @@ class KubeSpawner(Spawner):
                     )
                 )
             )
+
+    async def _ensure_namespace(self):
+        ns=make_namespace(self.namespace)
+        api=self.api
+        try:
+            api.create_namespace(ns)
+        except ApiException as e:
+            if e.status != 409:
+                # It's fine if it already exists
+                self.log.exception("Failed to create namespace %s",
+                                   self.namespace)
+                raise
+        
 
 
 class MultiNamespaceKubeSpawner(KubeSpawner):

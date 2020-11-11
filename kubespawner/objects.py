@@ -20,7 +20,9 @@ from kubernetes.client.models import (
     V1Affinity,
     V1NodeAffinity, V1NodeSelector, V1NodeSelectorTerm, V1PreferredSchedulingTerm, V1NodeSelectorRequirement,
     V1PodAffinity, V1PodAntiAffinity, V1WeightedPodAffinityTerm, V1PodAffinityTerm,
+    V1Namespace
 )
+
 
 def make_pod(
     name,
@@ -169,7 +171,8 @@ def make_pod(
         https://kubernetes.io/docs/concepts/configuration/taint-and-toleration/.
 
         Pass this field an array of "Toleration" objects.*
-        * https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.10/#nodeselectorterm-v1-core
+        #nodeselectorterm-v1-core
+        * https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.10/
     node_affinity_preferred:
         Affinities describe where pods prefer or require to be scheduled, they
         may prefer or require a node to have a certain label or be in proximity
@@ -177,7 +180,8 @@ def make_pod(
         https://kubernetes.io/docs/concepts/configuration/assign-pod-node/
 
         Pass this field an array of "PreferredSchedulingTerm" objects.*
-        * https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.10/#preferredschedulingterm-v1-core
+        #preferredschedulingterm-v1-core
+        * https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.10/
     node_affinity_required:
         Affinities describe where pods prefer or require to be scheduled, they
         may prefer or require a node to have a certain label or be in proximity
@@ -185,7 +189,8 @@ def make_pod(
         https://kubernetes.io/docs/concepts/configuration/assign-pod-node/
 
         Pass this field an array of "NodeSelectorTerm" objects.*
-        * https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.10/#nodeselectorterm-v1-core
+        #nodeselectorterm-v1-core
+        * https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.10/
     pod_affinity_preferred:
         Affinities describe where pods prefer or require to be scheduled, they
         may prefer or require a node to have a certain label or be in proximity
@@ -193,7 +198,8 @@ def make_pod(
         https://kubernetes.io/docs/concepts/configuration/assign-pod-node/
 
         Pass this field an array of "WeightedPodAffinityTerm" objects.*
-        * https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.10/#weightedpodaffinityterm-v1-core
+        #weightedpodaffinityterm-v1-core
+        * https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.10/
     pod_affinity_required:
         Affinities describe where pods prefer or require to be scheduled, they
         may prefer or require a node to have a certain label or be in proximity
@@ -266,9 +272,10 @@ def make_pod(
     # ref: https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.16/#podsecuritycontext-v1-core (pod)
     pod_security_context = V1PodSecurityContext()
     if fs_gid is not None:
-       pod_security_context.fs_group = int(fs_gid)
+        pod_security_context.fs_group = int(fs_gid)
     if supplemental_gids is not None and supplemental_gids:
-       pod_security_context.supplemental_groups = [int(gid) for gid in supplemental_gids]
+        pod_security_context.supplemental_groups = [
+            int(gid) for gid in supplemental_gids]
     # Only clutter pod spec with actual content
     if not all([e is None for e in pod_security_context.to_dict().values()]):
         pod.spec.security_context = pod_security_context
@@ -308,7 +315,8 @@ def make_pod(
         image_pull_policy=image_pull_policy,
         lifecycle=lifecycle_hooks,
         resources=V1ResourceRequirements(),
-        volume_mounts=[get_k8s_model(V1VolumeMount, obj) for obj in (volume_mounts or [])],
+        volume_mounts=[get_k8s_model(V1VolumeMount, obj)
+                       for obj in (volume_mounts or [])],
         security_context=container_security_context,
     )
 
@@ -318,7 +326,6 @@ def make_pod(
         pod.spec.automount_service_account_token = False
     else:
         pod.spec.service_account_name = service_account
-
 
     notebook_container.resources.requests = {}
     if cpu_guarantee:
@@ -599,3 +606,11 @@ def make_ingress(
     )
 
     return endpoint, service, ingress
+
+
+def make_namespace(name):
+    """
+    Make a k8s namespace specification for a user pod.
+    """
+    return V1Namespace(metadata=dict(name=name))
+    

@@ -4,7 +4,7 @@ from jupyterhub.orm import Spawner
 from kubernetes.client.models import (
     V1SecurityContext, V1Container, V1Capabilities, V1Pod
 )
-from kubespawner import KubeSpawner, MultiNamespaceKubeSpawner
+from kubespawner import KubeSpawner
 from traitlets.config import Config
 from unittest.mock import Mock
 import json
@@ -24,6 +24,7 @@ class MockUser(Mock):
     def url(self):
         return self.server.url
 
+
 def test_deprecated_config():
     """Deprecated config is handled correctly"""
     with pytest.warns(DeprecationWarning):
@@ -33,7 +34,8 @@ def test_deprecated_config():
         c.KubeSpawner.fs_gid = 10
         # only deprecated set, should still work
         c.KubeSpawner.hub_connect_ip = '10.0.1.1'
-        c.KubeSpawner.singleuser_extra_pod_config = extra_pod_config = {"key": "value"}
+        c.KubeSpawner.singleuser_extra_pod_config = extra_pod_config = {
+            "key": "value"}
         c.KubeSpawner.image_spec = 'abc:123'
         c.KubeSpawner.image_pull_secrets = 'k8s-secret-a'
         spawner = KubeSpawner(hub=Hub(), config=c, _mock=True)
@@ -129,7 +131,8 @@ async def test_spawn(kube_ns, kube_client, config):
 
 @pytest.mark.asyncio
 async def test_spawn_progress(kube_ns, kube_client, config):
-    spawner = KubeSpawner(hub=Hub(), user=MockUser(name="progress"), config=config)
+    spawner = KubeSpawner(hub=Hub(), user=MockUser(
+        name="progress"), config=config)
     # empty spawner isn't running
     status = await spawner.poll()
     assert isinstance(status, int)
@@ -201,7 +204,7 @@ _test_profiles = [
             'image': 'training/python:label',
             'cpu_limit': 1,
             'mem_limit': 512 * 1024 * 1024,
-            }
+        }
     },
     {
         'display_name': 'Training Env - Datascience',
@@ -210,7 +213,7 @@ _test_profiles = [
             'image': 'training/datascience:label',
             'cpu_limit': 4,
             'mem_limit': 8 * 1024 * 1024 * 1024,
-            }
+        }
     },
 ]
 
@@ -221,7 +224,8 @@ async def test_user_options_set_from_form():
     spawner.profile_list = _test_profiles
     # render the form
     await spawner.get_options_form()
-    spawner.user_options = spawner.options_from_form({'profile': [_test_profiles[1]['slug']]})
+    spawner.user_options = spawner.options_from_form(
+        {'profile': [_test_profiles[1]['slug']]})
     assert spawner.user_options == {
         'profile': _test_profiles[1]['slug'],
     }
@@ -350,47 +354,3 @@ def test_spawner_can_use_list_of_image_pull_secrets():
     c.KubeSpawner.image_pull_secrets = secrets
     spawner = KubeSpawner(hub=Hub(), config=c, _mock=True)
     assert spawner.image_pull_secrets == secrets
-
-
-def test_enable_user_namespaces():
-    user = MockUser()
-    spawner = KubeSpawner(user=user, _mock=True, enable_user_namespaces=True)
-    assert spawner.namespace.endswith("-{}".format(user.escaped_name))
-
-
-def test_multi_namespace_spawner_class():
-    user = MockUser()
-    spawner = MultiNamespaceKubeSpawner(user=user, _mock=True)
-    assert spawner.namespace.endswith("-{}".format(user.escaped_name))
-    
-
-@pytest.mark.asyncio
-async def test_multi_namespace_spawn(kube_client, config):
-    spawner = MultiNamespaceKubeSpawner(hub=Hub(), user=MockUser(),
-                                        config=config)
-    # empty spawner isn't running
-    status = await spawner.poll()
-    assert isinstance(status, int)
-
-    # start the spawner
-    await spawner.start()
-    # get the namespace
-    kube_ns = spawner.namespace
-    # verify the pod exists
-    pods = kube_client.list_namespaced_pod(kube_ns).items
-    pod_names = [p.metadata.name for p in pods]
-    assert "jupyter-%s" % spawner.user.name in pod_names
-    # verify poll while running
-    status = await spawner.poll()
-    assert status is None
-    # stop the pod
-    await spawner.stop()
-
-    # verify pod is gone
-    pods = kube_client.list_namespaced_pod(kube_ns).items
-    pod_names = [p.metadata.name for p in pods]
-    assert "jupyter-%s" % spawner.user.name not in pod_names
-
-    # verify exit status
-    status = await spawner.poll()
-    assert isinstance(status, int)
