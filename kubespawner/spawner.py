@@ -1522,7 +1522,7 @@ class KubeSpawner(Spawner):
         safe_username = escapism.escape(
             self.user.name, safe=safe_chars, escape_char="-"
         ).lower()
-        hub_namespace = self.get_hub_namespace()
+        hub_namespace = self._namespace_default()
         if hub_namespace == "default":
             hub_namespace = "user"
         rendered = template.format(
