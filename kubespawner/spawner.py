@@ -209,6 +209,7 @@ class KubeSpawner(Spawner):
         # By now, all the traitlets have been set, so we can use them to
         # compute other attributes
 
+        self.hub_namespace = self.get_hub_namespace()
         if self.enable_user_namespaces:
             self.namespace = self._expand_user_namespace_name()
 
