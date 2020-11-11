@@ -356,9 +356,6 @@ class KubeSpawner(Spawner):
                 return f.read().strip()
         return 'default'
 
-    def get_hub_namespace(self):
-        return self._namespace_default()
-
     ip = Unicode(
         '0.0.0.0',
         config=True,
