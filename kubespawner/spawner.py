@@ -356,6 +356,9 @@ class KubeSpawner(Spawner):
                 return f.read().strip()
         return 'default'
 
+    def get_hub_namespace(self):
+        return self._namespace_default()
+
     ip = Unicode(
         '0.0.0.0',
         config=True,
@@ -1522,7 +1525,7 @@ class KubeSpawner(Spawner):
         safe_username = escapism.escape(
             self.user.name, safe=safe_chars, escape_char="-"
         ).lower()
-        hub_namespace = self._namespace_default()
+        hub_namespace = self.get_hub_namespace()
         if hub_namespace == "default":
             hub_namespace = "user"
         rendered = template.format(
