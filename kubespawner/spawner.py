@@ -182,7 +182,6 @@ class KubeSpawner(Spawner):
     def __init__(self, *args, **kwargs):
         _mock = kwargs.pop('_mock', False)
         super().__init__(*args, **kwargs)
-        self.log.warning("__init__ returned from superclass init!")
 
         if _mock:
             # runs during test execution only
@@ -212,7 +211,6 @@ class KubeSpawner(Spawner):
 
         if self.enable_user_namespaces:
             self.namespace = self._expand_user_namespace_name()
-        self.log.warning("Spawner namespace is {}".format(self.namespace))
 
         if not _mock:
             # runs during normal execution only
@@ -1740,7 +1738,10 @@ class KubeSpawner(Spawner):
         # have to wait for first load of data before we have a valid answer
         if not self.pod_reflector.first_load_future.done():
             await self.pod_reflector.first_load_future
-        data = self.pod_reflector.pods.get(self.pod_name, None)
+        ref_key = self.pod_name
+        if self.enable_user_namespaces:
+            ref_key = "{}/{}".format(self.namespace, self.pod_name)
+        data = self.pod_reflector.pods.get(ref_key, None)
         if data is not None:
             if data["status"]["phase"] == 'Pending':
                 return None
@@ -1857,7 +1858,6 @@ class KubeSpawner(Spawner):
         If replace=True, a running pod reflector will be stopped
         and a new one started (for recovering from possible errors).
         """
-        self.log.warning("Entered _start_reflector()")
         main_loop = IOLoop.current()
 
         def on_reflector_failure():
@@ -1880,11 +1880,6 @@ class KubeSpawner(Spawner):
         if replace and previous_reflector:
             # we replaced the reflector, stop the old one
             previous_reflector.stop()
-
-        self.log.warning("Current reflector: {}".format(
-            self.__class__.reflectors[key]))
-        self.log.warning("Current reflector resources: {}".format(
-            self.__class__.reflectors[key].resources))
 
         # return the current reflector
         return self.__class__.reflectors[key]
@@ -2055,11 +2050,14 @@ class KubeSpawner(Spawner):
         if self.modify_pod_hook:
             pod = await gen.maybe_future(self.modify_pod_hook(self, pod))
 
+        ref_key = self.pod_name
+        if self.enable_user_namespaces:
+            ref_key = "{}/{}".format(self.namespace, self.pod_name)
         # If there's a timeout, just let it propagate
         await exponential_backoff(
             partial(self._make_create_pod_request,
                     pod, self.k8s_api_request_timeout),
-            f'Could not create pod {self.pod_name}',
+            f'Could not create pod {ref_key}',
             timeout=self.k8s_api_request_retry_timeout
         )
 
@@ -2072,28 +2070,28 @@ class KubeSpawner(Spawner):
         try:
             await exponential_backoff(
                 lambda: self.is_pod_running(
-                    self.pod_reflector.pods.get(self.pod_name, None)),
-                'pod/%s did not start in %s seconds!' % (
-                    self.pod_name, self.start_timeout),
+                    self.pod_reflector.pods.get(ref_key, None)),
+                'pod %s did not start in %s seconds!' % (
+                    ref_key, self.start_timeout),
                 timeout=self.start_timeout,
             )
         except TimeoutError:
-            if self.pod_name not in self.pod_reflector.pods:
+            if ref_key not in self.pod_reflector.pods:
                 # if pod never showed up at all,
                 # restart the pod reflector which may have become disconnected.
                 self.log.error(
                     "Pod %s never showed up in reflector, restarting pod reflector",
-                    self.pod_name,
+                    ref_key,
                 )
                 self._start_watching_pods(replace=True)
             raise
 
-        pod = self.pod_reflector.pods[self.pod_name]
+        pod = self.pod_reflector.pods[ref_key]
         self.pod_id = pod["metadata"]["uid"]
         if self.event_reflector:
             self.log.debug(
                 'pod %s events before launch: %s',
-                self.pod_name,
+                ref_key,
                 "\n".join(
                     [
                         "%s [%s] %s" % (
@@ -2111,7 +2109,10 @@ class KubeSpawner(Spawner):
         Designed to be used with exponential_backoff, so returns
         True / False on success / failure
         """
-        self.log.info("Deleting pod %s", pod_name)
+        ref_key = pod_name
+        if self.enable_user_namespaces:
+            ref_key = "{}/{}".format(self.namespace, pod_name)
+        self.log.info("Deleting pod %s", ref_key)
         try:
             await gen.with_timeout(timedelta(seconds=request_timeout), self.asynchronize(
                 self.api.delete_namespaced_pod,
@@ -2127,7 +2128,7 @@ class KubeSpawner(Spawner):
             if e.status == 404:
                 self.log.warning(
                     "No pod %s to delete. Assuming already deleted.",
-                    pod_name,
+                    ref_key,
                 )
                 # If there isn't already a pod, that's ok too!
                 return True
@@ -2144,23 +2145,27 @@ class KubeSpawner(Spawner):
 
         delete_options.grace_period_seconds = grace_seconds
 
+        ref_key = self.pod_name
+        if self.enable_user_namespaces:
+            ref_key = "{}/{}".format(self.namespace, self.pod_name)
         await exponential_backoff(
             partial(self._make_delete_pod_request, self.pod_name,
                     delete_options, grace_seconds, self.k8s_api_request_timeout),
-            f'Could not delete pod {self.pod_name}',
+            f'Could not delete pod {ref_key}',
             timeout=self.k8s_api_request_retry_timeout
         )
 
         try:
             await exponential_backoff(
                 lambda: self.pod_reflector.pods.get(
-                    self.pod_name, None) is None,
-                'pod/%s did not disappear in %s seconds!' % (
-                    self.pod_name, self.start_timeout),
+                    ref_key, None) is None,
+                'pod %s did not disappear in %s seconds!' % (
+                    ref_key, self.start_timeout),
                 timeout=self.start_timeout,
             )
         except TimeoutError:
-            self.log.error("Pod %s did not disappear, restarting pod reflector", self.pod_name)
+            self.log.error(
+                "Pod %s did not disappear, restarting pod reflector", ref_key)
             self._start_watching_pods(replace=True)
             raise
 
@@ -2172,7 +2177,8 @@ class KubeSpawner(Spawner):
 
     def _render_options_form(self, profile_list):
         self._profile_list = self._init_profile_list(profile_list)
-        profile_form_template = Environment(loader=BaseLoader).from_string(self.profile_form_template)
+        profile_form_template = Environment(
+            loader=BaseLoader).from_string(self.profile_form_template)
         return profile_form_template.render(profile_list=self._profile_list)
 
     async def _render_options_form_dynamically(self, current_spawner):
@@ -2249,19 +2255,21 @@ class KubeSpawner(Spawner):
                 # no name specified, use the default
                 profile = default_profile
 
-        self.log.debug("Applying KubeSpawner override for profile '%s'", profile['display_name'])
+        self.log.debug(
+            "Applying KubeSpawner override for profile '%s'", profile['display_name'])
         kubespawner_override = profile.get('kubespawner_override', {})
         for k, v in kubespawner_override.items():
             if callable(v):
                 v = v(self)
-                self.log.debug(".. overriding KubeSpawner value %s=%s (callable result)", k, v)
+                self.log.debug(
+                    ".. overriding KubeSpawner value %s=%s (callable result)", k, v)
             else:
                 self.log.debug(".. overriding KubeSpawner value %s=%s", k, v)
             setattr(self, k, v)
 
     # set of recognised user option keys
     # used for warning about ignoring unrecognised options
-    _user_option_keys = {'profile',}
+    _user_option_keys = {'profile', }
 
     def _init_profile_list(self, profile_list):
         # generate missing slug fields from display_name
@@ -2292,7 +2300,8 @@ class KubeSpawner(Spawner):
         if self._profile_list:
             await self._load_profile(selected_profile)
         elif selected_profile:
-            self.log.warning("Profile %r requested, but profiles are not enabled", selected_profile)
+            self.log.warning(
+                "Profile %r requested, but profiles are not enabled", selected_profile)
 
         # help debugging by logging any option fields that are not recognized
         option_keys = set(self.user_options)
@@ -2309,8 +2318,8 @@ class KubeSpawner(Spawner):
             )
 
     async def _ensure_namespace(self):
-        ns=make_namespace(self.namespace)
-        api=self.api
+        ns = make_namespace(self.namespace)
+        api = self.api
         try:
             api.create_namespace(ns)
         except ApiException as e:
@@ -2319,11 +2328,10 @@ class KubeSpawner(Spawner):
                 self.log.exception("Failed to create namespace %s",
                                    self.namespace)
                 raise
-        
 
 
 class MultiNamespaceKubeSpawner(KubeSpawner):
     """
     MultiNamespaceKubeSpawner is the all-namespaces analog of KubeSpawner.
     """
-    enable_user_namespaces=True
+    enable_user_namespaces = True
