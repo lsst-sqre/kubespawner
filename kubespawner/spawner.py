@@ -182,6 +182,7 @@ class KubeSpawner(Spawner):
     def __init__(self, *args, **kwargs):
         _mock = kwargs.pop('_mock', False)
         super().__init__(*args, **kwargs)
+        self.log.warning("__init__ returned from superclass init!")
 
         if _mock:
             # runs during test execution only
@@ -211,6 +212,7 @@ class KubeSpawner(Spawner):
 
         if self.enable_user_namespaces:
             self.namespace = self._expand_user_namespace_name()
+        self.log.warning("Spawner namespace is {}".format(self.namespace))
 
         if not _mock:
             # runs during normal execution only
@@ -1647,7 +1649,8 @@ class KubeSpawner(Spawner):
         """
         Make a pvc manifest that will spawn current user's pvc.
         """
-        labels = self._build_common_labels(self._expand_all(self.storage_extra_labels))
+        labels = self._build_common_labels(
+            self._expand_all(self.storage_extra_labels))
         labels.update({
             'component': 'singleuser-storage'
         })
@@ -1780,7 +1783,7 @@ class KubeSpawner(Spawner):
                 # only consider events for my pod name
                 continue
 
-            if self._last_event and event["metadata"]["uid"]== self._last_event:
+            if self._last_event and event["metadata"]["uid"] == self._last_event:
                 # saw last_event marker, ignore any previous events
                 # and only consider future events
                 # only include events *after* our _last_event marker
@@ -1788,7 +1791,6 @@ class KubeSpawner(Spawner):
             else:
                 events.append(event)
         return events
-
 
     async def progress(self):
         """
@@ -1855,7 +1857,9 @@ class KubeSpawner(Spawner):
         If replace=True, a running pod reflector will be stopped
         and a new one started (for recovering from possible errors).
         """
+        self.log.warning("Entered _start_reflector()")
         main_loop = IOLoop.current()
+
         def on_reflector_failure():
             self.log.critical(
                 "%s reflector failed, halting Hub.",
@@ -1876,6 +1880,9 @@ class KubeSpawner(Spawner):
         if replace and previous_reflector:
             # we replaced the reflector, stop the old one
             previous_reflector.stop()
+
+        self.log.warning("Current reflector: {}".format(
+            self.__class__.reflectors[key]))
 
         # return the current reflector
         return self.__class__.reflectors[key]
