@@ -355,11 +355,14 @@ def make_pod(
     pod.spec.containers.append(notebook_container)
 
     if extra_containers:
-        pod.spec.containers.extend([get_k8s_model(V1Container, obj) for obj in extra_containers])
+        pod.spec.containers.extend(
+            [get_k8s_model(V1Container, obj) for obj in extra_containers])
     if tolerations:
-        pod.spec.tolerations = [get_k8s_model(V1Toleration, obj) for obj in tolerations]
+        pod.spec.tolerations = [get_k8s_model(
+            V1Toleration, obj) for obj in tolerations]
     if init_containers:
-        pod.spec.init_containers = [get_k8s_model(V1Container, obj) for obj in init_containers]
+        pod.spec.init_containers = [get_k8s_model(
+            V1Container, obj) for obj in init_containers]
     if volumes:
         pod.spec.volumes = [get_k8s_model(V1Volume, obj) for obj in volumes]
     else:
@@ -374,12 +377,14 @@ def make_pod(
         node_selector = None
         if node_affinity_required:
             node_selector = V1NodeSelector(
-                node_selector_terms=[get_k8s_model(V1NodeSelectorTerm, obj) for obj in node_affinity_required],
+                node_selector_terms=[get_k8s_model(
+                    V1NodeSelectorTerm, obj) for obj in node_affinity_required],
             )
 
         preferred_scheduling_terms = None
         if node_affinity_preferred:
-            preferred_scheduling_terms = [get_k8s_model(V1PreferredSchedulingTerm, obj) for obj in node_affinity_preferred]
+            preferred_scheduling_terms = [get_k8s_model(
+                V1PreferredSchedulingTerm, obj) for obj in node_affinity_preferred]
 
         node_affinity = V1NodeAffinity(
             preferred_during_scheduling_ignored_during_execution=preferred_scheduling_terms,
@@ -608,9 +613,15 @@ def make_ingress(
     return endpoint, service, ingress
 
 
-def make_namespace(name):
+def make_namespace(name, labels=None, annotations=None):
     """
     Make a k8s namespace specification for a user pod.
     """
-    return V1Namespace(metadata=dict(name=name))
-    
+
+    metadata =  V1ObjectMeta(
+        name=name,
+        labels=(labels or {}).copy(),
+        annotations=(annotations or {}).copy()
+    )
+
+    return V1Namespace(metadata=metadata)

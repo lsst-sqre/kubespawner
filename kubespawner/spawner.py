@@ -1742,9 +1742,7 @@ class KubeSpawner(Spawner):
         # have to wait for first load of data before we have a valid answer
         if not self.pod_reflector.first_load_future.done():
             await self.pod_reflector.first_load_future
-        ref_key = self.pod_name
-        if self.enable_user_namespaces:
-            ref_key = "{}/{}".format(self.namespace, self.pod_name)
+        ref_key = "{}/{}".format(self.namespace, self.pod_name)
         data = self.pod_reflector.pods.get(ref_key, None)
         if data is not None:
             if data["status"]["phase"] == 'Pending':
@@ -2054,9 +2052,7 @@ class KubeSpawner(Spawner):
         if self.modify_pod_hook:
             pod = await gen.maybe_future(self.modify_pod_hook(self, pod))
 
-        ref_key = self.pod_name
-        if self.enable_user_namespaces:
-            ref_key = "{}/{}".format(self.namespace, self.pod_name)
+        ref_key = "{}/{}".format(self.namespace, self.pod_name)
         # If there's a timeout, just let it propagate
         await exponential_backoff(
             partial(self._make_create_pod_request,
@@ -2087,6 +2083,7 @@ class KubeSpawner(Spawner):
                     "Pod %s never showed up in reflector, restarting pod reflector",
                     ref_key,
                 )
+                self.log.error("Pods: {}".format(self.pod_reflector.pods))
                 self._start_watching_pods(replace=True)
             raise
 
@@ -2113,9 +2110,7 @@ class KubeSpawner(Spawner):
         Designed to be used with exponential_backoff, so returns
         True / False on success / failure
         """
-        ref_key = pod_name
-        if self.enable_user_namespaces:
-            ref_key = "{}/{}".format(self.namespace, pod_name)
+        ref_key = "{}/{}".format(self.namespace, pod_name)
         self.log.info("Deleting pod %s", ref_key)
         try:
             await gen.with_timeout(timedelta(seconds=request_timeout), self.asynchronize(
@@ -2149,9 +2144,7 @@ class KubeSpawner(Spawner):
 
         delete_options.grace_period_seconds = grace_seconds
 
-        ref_key = self.pod_name
-        if self.enable_user_namespaces:
-            ref_key = "{}/{}".format(self.namespace, self.pod_name)
+        ref_key = "{}/{}".format(self.namespace, self.pod_name)
         await exponential_backoff(
             partial(self._make_delete_pod_request, self.pod_name,
                     delete_options, grace_seconds, self.k8s_api_request_timeout),

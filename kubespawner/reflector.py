@@ -202,13 +202,8 @@ class ResourceReflector(LoggingConfigurable):
             )
         # This is an atomic operation on the dictionary!
         initial_resources = json.loads(initial_resources.read())
-        self.resources = {}
-        for p in initial_resources["items"]:
-            key = p["metadata"]["name"]
-            if self.omit_namespace:
-                key = "{}/{}".format(p["metadata"]["namespace"],
-                                     p["metadata"]["name"])
-            self.resources[key] = p
+        self.resources = {
+            f'{p["metadata"]["namespace"]}/{ p["metadata"]["name"]}': p for p in initial_resources["items"]}
         # return the resource version so we can hook up a watch
         return initial_resources["metadata"]["resourceVersion"]
 
@@ -295,16 +290,14 @@ class ResourceReflector(LoggingConfigurable):
                     # ref: https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.16/#event-v1-core
                     cur_delay = 0.1
                     resource = watch_event['object']
-                    key = resource["metadata"]["name"]
-                    if self.omit_namespace:
-                        key = "{}/{}".format(resource["metadata"]["namespace"],
+                    ref_key = "{}/{}".format(resource["metadata"]["namespace"],
                                              resource["metadata"]["name"])
                     if watch_event['type'] == 'DELETED':
                         # This is an atomic delete operation on the dictionary!
-                        self.resources.pop(key, None)
+                        self.resources.pop(ref_key, None)
                     else:
                         # This is an atomic operation on the dictionary!
-                        self.resources[key] = resource
+                        self.resources[ref_key] = resource
                     if self._stop_event.is_set():
                         self.log.info("%s watcher stopped", self.kind)
                         break
