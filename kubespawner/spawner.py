@@ -182,7 +182,6 @@ class KubeSpawner(Spawner):
     def __init__(self, *args, **kwargs):
         _mock = kwargs.pop('_mock', False)
         super().__init__(*args, **kwargs)
-        self.log.warning("Entering __init__ post-super().__init__()")
 
         if _mock:
             # runs during test execution only
@@ -211,10 +210,8 @@ class KubeSpawner(Spawner):
         # compute other attributes
 
         if self.enable_user_namespaces:
-            self.log.warning(
-                "Overriding current namespace {}".format(self.namespace))
             self.namespace = self._expand_user_namespace_name()
-            self.log.warning("New namespace: {}".format(self.namespace))
+            self.log.info("Using user namespace: {}".format(self.namespace))
 
         if not _mock:
             # runs during normal execution only
